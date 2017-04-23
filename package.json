@@ -1,0 +1,15 @@
+{
+  "name": "sipnode",
+  "version": "0.0.1",
+  "description": "Simple Node SIP server",
+  "dependencies": {
+    "sip.js": "^0.7.7",
+    "kurento-client": "6.6.0"
+  },
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Håvar Aambø Fosstveit",
+  "license": "MIT"
+}
