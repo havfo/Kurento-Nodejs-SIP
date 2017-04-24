@@ -120,8 +120,7 @@ function addClient(id, sdp, callback) {
     clients[id] = {
         id: id,
         RtpEndpoint: null,
-        MediaPipeline: null,
-        filter: null
+        MediaPipeline: null
     }
 
     createMediaPipeline(function(error, _pipeline) {
@@ -140,58 +139,21 @@ function addClient(id, sdp, callback) {
 
             clients[id].RtpEndpoint = _RtpEndpoint;
 
-            clients[id].MediaPipeline.create("FaceOverlayFilter",
-                function(error, filter) {
+            clients[id].RtpEndpoint.connect(clients[id].RtpEndpoint, function(error) {
+                if (error) {
+                    return callback(error);
+                }
+
+                clients[id].RtpEndpoint.processOffer(sdp, function(error, sdpAnswer) {
                     if (error) {
+                        stop(id);
+                        console.log("Error processing offer " + error);
                         return callback(error);
                     }
 
-                    clients[id].filter = filter;
-
-                    console.log("Got FaceOverlayFilter");
-                    var offsetXPercent = -0.4;
-                    var offsetYPercent = -1;
-                    var widthPercent = 1.5;
-                    var heightPercent = 1.5;
-
-                    console.log("Setting overlay image");
-                    clients[id].filter.setOverlayedImage("http://ringmeg.uninett.no/hat.png", offsetXPercent,
-                        offsetYPercent, widthPercent,
-                        heightPercent,
-                        function(error) {
-                            if (error) {
-                                return callback(error);
-                            }
-                            console.log("Set overlay image");
-
-                            console.log("Connecting ...");
-                            clients[id].RtpEndpoint.connect(clients[id].filter, function(error) {
-                                if (error) {
-                                    return callback(error);
-                                }
-
-                                console.log("WebRtcEndpoint --> filter");
-
-                                clients[id].filter.connect(clients[id].RtpEndpoint, function(error) {
-                                    if (error) {
-                                        return callback(error);
-                                    }
-
-                                    console.log("Filter --> WebRtcEndpoint");
-
-                                    clients[id].RtpEndpoint.processOffer(sdp, function(error, sdpAnswer) {
-                                        if (error) {
-                                            stop(id);
-                                            console.log("Error processing offer " + error);
-                                            return callback(error);
-                                        }
-
-                                        callback(null, sdpAnswer);
-                                    });
-                                });
-                            });
-                        });
+                    callback(null, sdpAnswer);
                 });
+            });
         });
     });
 }
