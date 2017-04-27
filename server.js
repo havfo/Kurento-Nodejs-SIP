@@ -51,7 +51,7 @@ var ua = new SIP.UA({
         this.getDescription = function(onSuccess, onFailure, mediaHint) {
             console.log("getDescription called!");
 
-            joinRoom(roomName, sessionId, this.offer, function(error, sdpAnswer) {
+            joinRoom(roomName, sessionId, offer, function(error, sdpAnswer) {
                 if (error) {
                     onFailure();
                 } else {
@@ -167,14 +167,14 @@ function joinRoom(room, id, sdp, callback) {
 
                     rooms[id].SIPClient.RtpEndpoint = _rtpEndpoint;
 
-                    rooms[id].SIPClient.HubPort.connect(rooms[id].SIPClient.RtpEndpoint, , function(error) {
+                    rooms[id].SIPClient.HubPort.connect(rooms[id].SIPClient.RtpEndpoint, function(error) {
                         if (error) {
                             stop(id);
                             console.log("Error connecting " + error);
                             return callback(error);
                         }
 
-                        rooms[id].SIPClient.RtpEndpoint.processOffer(sdp, function(error, sdpAnswer) {
+                        rooms[id].SIPClient.RtpEndpoint.processOffer(sdp, (error, sdpAnswer) => {
                             if (error) {
                                 stop(id);
                                 console.log("Error processing offer " + error);
@@ -191,45 +191,183 @@ function joinRoom(room, id, sdp, callback) {
                                 console.log('received sdp from', msg.pid);
                                 if (msg.sdp.type == 'offer') {
                                     rooms[id].WebRTCClients[msg.pid] = {};
-                                    rooms[id].WebRTCClients[msg.pid].peerConnection.setRemoteDescription(msg.sdp);
-                                    rooms[id].WebRTCClients[msg.pid].peerConnection.createAnswer().then(function(description) {
-                                        createdDescription(description, msg.pid)
-                                    }).catch(errorHandler);
+                                    rooms[id].MediaPipeline.create('WebRtcEndpoint', function(error, _webrtcEndpoint) {
+                                        console.info("Creating createWebRtcEndpoint");
+                                        if (error) {
+                                            removeParticipant(id, msg.pid);
+                                            return error;
+                                        }
+
+                                        rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint = _webrtcEndpoint;
+
+                                        if (rooms[id].WebRTCClients[msg.pid].iceCandidateQueue) {
+                                            while (rooms[id].WebRTCClients[msg.pid].iceCandidateQueue.length) {
+                                                let iceCandidate = rooms[id].WebRTCClients[msg.pid].iceCandidateQueue.shift();
+
+                                                rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.addIceCandidate(iceCandidate);
+                                            }
+
+                                            delete rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.iceCandidateQueue;
+                                        }
+
+                                        rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.on('OnIceCandidate', event => {
+                                            let candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
+                                            rooms[id].RoomSocket.emit('iceCandidate', {
+                                                id: msg.pid,
+                                                candidate: candidate
+                                            });
+                                        });
+
+                                        rooms[id].Composite.createHubPort(function(error, _hubPort) {
+                                            console.info("Creating hubPort");
+                                            if (error) {
+                                                removeParticipant(id, msg.pid);
+                                                return error;
+                                            }
+
+                                            rooms[id].WebRTCClients[msg.pid].HubPort = _hubPort;
+
+                                            rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.connect(rooms[id].WebRTCClients[msg.pid].HubPort, function(error) {
+                                                if (error) {
+                                                    removeParticipant(id, msg.pid);
+                                                    return error;
+                                                }
+
+                                                rooms[id].SIPClient.RtpEndpoint.connect(rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint, function(error) {
+                                                    if (error) {
+                                                        removeParticipant(id, msg.pid);
+                                                        return error;
+                                                    }
+
+                                                    rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.processOffer(msg.sdp, function(error, returnsdp) {
+                                                        if (error) {
+                                                            removeParticipant(id, msg.pid);
+                                                            return error;
+                                                        }
+
+                                                        var returnmsg = {};
+                                                        returnmsg.sdp = returnsdp;
+                                                        returnmsg.pid = msg.pid;
+
+                                                        rooms[id].RoomSocket.emit('sdp', returnmsg);
+
+                                                        rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.gatherCandidates(error => {
+                                                            if (error) {
+                                                                return error;
+                                                            }
+                                                        });
+                                                    });
+                                                });
+                                            });
+                                        });
+                                    });
                                 } else if (msg.sdp.type == 'answer') {
-                                    rooms[id].WebRTCClients[msg.pid].peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp))
+                                    rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.processAnswer(msg.sdp, function(error) {
+                                        if (error) {
+                                            removeParticipant(id, msg.pid);
+                                            return error;
+                                        }
+                                    });
                                 }
                             });
 
                             rooms[id].RoomSocket.on('iceCandidate', function(msg) {
-                                console.log('got iceCandidate from %s: %s', msg.pid, msg.candidate.candidate);
-                                rooms[id].WebRTCClients[msg.pid].peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(errorHandler);
+                                console.log('got iceCandidate from %s: %s', msg.pid, msg.candidate);
+                                let candidate = kurento.register.complexTypes.IceCandidate(msg.candidate);
+                                if (rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint) {
+                                    rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.addIceCandidate(candidate);
+                                } else {
+                                    rooms[id].WebRTCClients[msg.pid].iceCandidateQueue.push({
+                                        candidate: candidate
+                                    });
+                                }
                             });
 
                             rooms[id].RoomSocket.on('participantReady', function(msg) {
+                                // Create WebRTCEndpoint
                                 console.log('got participantReady:', msg);
 
                                 rooms[id].WebRTCClients[msg.pid] = {};
+                                rooms[id].MediaPipeline.create('WebRtcEndpoint', function(error, _webrtcEndpoint) {
+                                    console.info("Creating createWebRtcEndpoint");
+                                    if (error) {
+                                        removeParticipant(id, msg.pid);
+                                        return error;
+                                    }
 
-                                rooms[id].WebRTCClients[msg.pid].peerConnection = new RTCPeerConnection(tempPeerConnectionConfig);
+                                    rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint = _webrtcEndpoint;
 
-                                rooms[id].WebRTCClients[msg.pid].peerConnection.onicecandidate = function(event) {
-                                    gotIceCandidate(event.candidate, msg.pid)
-                                };
+                                    if (rooms[id].WebRTCClients[msg.pid].iceCandidateQueue) {
+                                        while (rooms[id].WebRTCClients[msg.pid].iceCandidateQueue.length) {
+                                            let iceCandidate = rooms[id].WebRTCClients[msg.pid].iceCandidateQueue.shift();
 
-                                rooms[id].WebRTCClients[msg.pid].peerConnection.addStream(localStream);
-                                rooms[id].WebRTCClients[msg.pid].peerConnection.createOffer().then(function(description) {
-                                    createdDescription(description, msg.pid)
-                                }).catch(errorHandler);
+                                            rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.addIceCandidate(iceCandidate);
+                                        }
+
+                                        delete rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.iceCandidateQueue;
+                                    }
+
+                                    rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.on('OnIceCandidate', event => {
+                                        let candidate = kurento.register.complexTypes.IceCandidate(event.candidate);
+                                        rooms[id].RoomSocket.emit('iceCandidate', {
+                                            id: msg.pid,
+                                            candidate: candidate
+                                        });
+                                    });
+
+                                    rooms[id].Composite.createHubPort(function(error, _hubPort) {
+                                        console.info("Creating hubPort");
+                                        if (error) {
+                                            removeParticipant(id, msg.pid);
+                                            return error;
+                                        }
+
+                                        rooms[id].WebRTCClients[msg.pid].HubPort = _hubPort;
+
+                                        rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.connect(rooms[id].WebRTCClients[msg.pid].HubPort, function(error) {
+                                            if (error) {
+                                                removeParticipant(id, msg.pid);
+                                                return error;
+                                            }
+
+                                            rooms[id].SIPClient.RtpEndpoint.connect(rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint, function(error) {
+                                                if (error) {
+                                                    removeParticipant(id, msg.pid);
+                                                    return error;
+                                                }
+
+                                                rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.generateOffer(function(error, sdpoffer) {
+                                                    if (error) {
+                                                        removeParticipant(id, msg.pid);
+                                                        return error;
+                                                    }
+
+                                                    var returnmsg = {};
+                                                    returnmsg.sdp = sdpoffer;
+                                                    returnmsg.pid = msg.pid;
+
+                                                    rooms[id].RoomSocket.emit('sdp', returnmsg);
+
+                                                    rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.gatherCandidates(error => {
+                                                        if (error) {
+                                                            return error;
+                                                        }
+                                                    });
+                                                });
+                                            });
+                                        });
+                                    });
+                                });
                             });
 
                             rooms[id].RoomSocket.on('bye', function(msg) {
                                 console.log('got bye from:', msg.pid);
-                                deleteParticipant(msg.pid);
+                                removeParticipant(id, msg.pid);
                             });
 
                             rooms[id].RoomSocket.on('participantDied', function(msg) {
                                 console.log('received participantDied from server: removing participant from my participantList');
-                                deleteParticipant(msg.pid);
+                                removeParticipant(id, msg.pid);
                             });
 
                             rooms[id].RoomSocket.emit('ready', rooms[id].room);
@@ -243,15 +381,54 @@ function joinRoom(room, id, sdp, callback) {
     });
 }
 
+function removeParticipant(id, pid) {
+    if (rooms[id].WebRTCClients) {
+        if (rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint) {
+            rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.release();
+        }
+
+        if (rooms[id].WebRTCClients[msg.pid].HubPort) {
+            rooms[id].WebRTCClients[msg.pid].HubPort.release();
+        }
+
+        delete rooms[id].WebRTCClients[msg.pid];
+    }
+}
+
 function stop(id) {
     if (rooms[id]) {
         rooms[id].RoomSocket.emit('bye');
-        if (rooms[id].RtpEndpoint) {
-            rooms[id].RtpEndpoint.release();
+
+        if (rooms[id].SIPClient.RtpEndpoint) {
+            rooms[id].SIPClient.RtpEndpoint.release();
         }
+
+        if (rooms[id].SIPClient.HubPort) {
+            rooms[id].SIPClient.HubPort.release();
+        }
+
+        if (rooms[id].WebRTCClients) {
+            while (rooms[id].WebRTCClients.length) {
+                let WebRTCClient = rooms[id].WebRTCClients.shift();
+
+                if (WebRTCClient.WebRTCEndpoint) {
+                    WebRTCClient.WebRTCEndpoint.release();
+                }
+
+                if (WebRTCClient.HubPort) {
+                    WebRTCClient.HubPort.release();
+                }
+            }
+        }
+
+        if (rooms[id].Composite) {
+            rooms[id].Composite.release();
+        }
+
         if (rooms[id].MediaPipeline) {
             rooms[id].MediaPipeline.release();
         }
+
         delete rooms[id];
     }
 }
