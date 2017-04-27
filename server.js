@@ -2,12 +2,13 @@ var SIP = require('sip.js');
 var kurento = require('kurento-client');
 var util = require('util');
 var fs = require('fs');
+var io = require('socket.io-client');
 
 const ws_uri = "ws://meet.akademia.no:8080/kurento";
 var kurentoClient = null;
 
 var idCounter = 0;
-var clients = {};
+var rooms = {};
 
 function nextUniqueId() {
     idCounter++;
@@ -29,6 +30,9 @@ var ua = new SIP.UA({
     stunServers: "stun:stun.l.google.com:19302",
     mediaHandlerFactory: function() {
         var sessionId = nextUniqueId();
+        var roomName = null;
+        var offer = null;
+        var answer = null;
 
         this.isReady = function isReady() {
             console.log('Is ready!!!!');
@@ -47,7 +51,7 @@ var ua = new SIP.UA({
         this.getDescription = function(onSuccess, onFailure, mediaHint) {
             console.log("getDescription called!");
 
-            addClient(sessionId, this.offer, function(error, sdpAnswer) {
+            joinRoom(roomName, sessionId, this.offer, function(error, sdpAnswer) {
                 if (error) {
                     onFailure();
                 } else {
@@ -65,7 +69,8 @@ var ua = new SIP.UA({
 
         this.setDescription = function(message, onSuccess, onFailure) {
             console.log("setDescription called!");
-            this.offer = message.body;
+            offer = message.body;
+            roomName = message.getHeader("X-Room");
             onSuccess();
         }
 
@@ -115,43 +120,123 @@ function createMediaPipeline(callback) {
     });
 }
 
-function addClient(id, sdp, callback) {
-
-    clients[id] = {
+function joinRoom(room, id, sdp, callback) {
+    rooms[id] = {
+        room: room,
         id: id,
-        RtpEndpoint: null,
-        MediaPipeline: null
+        SIPClient: {
+            RtpEndpoint: null,
+            HubPort: null
+        },
+        WebRTCClients: {},
+        MediaPipeline: null,
+        Composite: null,
+        RoomSocket: null
     }
 
     createMediaPipeline(function(error, _pipeline) {
         if (error) {
             console.log("Error creating MediaPipeline " + error);
+            stop(id);
             return callback(error);
         }
 
-        clients[id].MediaPipeline = _pipeline;
+        rooms[id].MediaPipeline = _pipeline;
 
-        clients[id].MediaPipeline.create('RtpEndpoint', function(error, _RtpEndpoint) {
-            console.info("Creating createRtpEndpoint");
+        rooms[id].MediaPipeline.create('Composite', function(error, _composite) {
+            console.log("creating Composite");
             if (error) {
+                stop(id);
                 return callback(error);
             }
+            rooms[id].Composite = _composite;
 
-            clients[id].RtpEndpoint = _RtpEndpoint;
-
-            clients[id].RtpEndpoint.connect(clients[id].RtpEndpoint, function(error) {
+            rooms[id].Composite.createHubPort(function(error, _hubPort) {
+                console.info("Creating hubPort");
                 if (error) {
                     return callback(error);
                 }
+                rooms[id].SIPClient.HubPort = _hubPort;
 
-                clients[id].RtpEndpoint.processOffer(sdp, function(error, sdpAnswer) {
+                rooms[id].MediaPipeline.create('RtpEndpoint', function(error, _rtpEndpoint) {
+                    console.info("Creating createRtpEndpoint");
                     if (error) {
                         stop(id);
-                        console.log("Error processing offer " + error);
                         return callback(error);
                     }
 
-                    callback(null, sdpAnswer);
+                    rooms[id].SIPClient.RtpEndpoint = _rtpEndpoint;
+
+                    rooms[id].SIPClient.HubPort.connect(rooms[id].SIPClient.RtpEndpoint, , function(error) {
+                        if (error) {
+                            stop(id);
+                            console.log("Error connecting " + error);
+                            return callback(error);
+                        }
+
+                        rooms[id].SIPClient.RtpEndpoint.processOffer(sdp, function(error, sdpAnswer) {
+                            if (error) {
+                                stop(id);
+                                console.log("Error processing offer " + error);
+                                return callback(error);
+                            }
+
+                            rooms[id].RoomSocket = io.connect('https://meet.uninett.no');
+                            rooms[id].RoomSocket.on('connection', function(socket) {
+                                console.log('Socket connected!');
+                            });
+
+                            rooms[id].RoomSocket.on('sdp', function(msg) {
+                                // Only create answers in response to offers
+                                console.log('received sdp from', msg.pid);
+                                if (msg.sdp.type == 'offer') {
+                                    rooms[id].WebRTCClients[msg.pid] = {};
+                                    rooms[id].WebRTCClients[msg.pid].peerConnection.setRemoteDescription(msg.sdp);
+                                    rooms[id].WebRTCClients[msg.pid].peerConnection.createAnswer().then(function(description) {
+                                        createdDescription(description, msg.pid)
+                                    }).catch(errorHandler);
+                                } else if (msg.sdp.type == 'answer') {
+                                    rooms[id].WebRTCClients[msg.pid].peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp))
+                                }
+                            });
+
+                            rooms[id].RoomSocket.on('iceCandidate', function(msg) {
+                                console.log('got iceCandidate from %s: %s', msg.pid, msg.candidate.candidate);
+                                rooms[id].WebRTCClients[msg.pid].peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(errorHandler);
+                            });
+
+                            rooms[id].RoomSocket.on('participantReady', function(msg) {
+                                console.log('got participantReady:', msg);
+
+                                rooms[id].WebRTCClients[msg.pid] = {};
+
+                                rooms[id].WebRTCClients[msg.pid].peerConnection = new RTCPeerConnection(tempPeerConnectionConfig);
+
+                                rooms[id].WebRTCClients[msg.pid].peerConnection.onicecandidate = function(event) {
+                                    gotIceCandidate(event.candidate, msg.pid)
+                                };
+
+                                rooms[id].WebRTCClients[msg.pid].peerConnection.addStream(localStream);
+                                rooms[id].WebRTCClients[msg.pid].peerConnection.createOffer().then(function(description) {
+                                    createdDescription(description, msg.pid)
+                                }).catch(errorHandler);
+                            });
+
+                            rooms[id].RoomSocket.on('bye', function(msg) {
+                                console.log('got bye from:', msg.pid);
+                                deleteParticipant(msg.pid);
+                            });
+
+                            rooms[id].RoomSocket.on('participantDied', function(msg) {
+                                console.log('received participantDied from server: removing participant from my participantList');
+                                deleteParticipant(msg.pid);
+                            });
+
+                            rooms[id].RoomSocket.emit('ready', rooms[id].room);
+
+                            callback(null, sdpAnswer);
+                        });
+                    });
                 });
             });
         });
@@ -159,13 +244,14 @@ function addClient(id, sdp, callback) {
 }
 
 function stop(id) {
-    if (clients[id]) {
-        if (clients[id].RtpEndpoint) {
-            clients[id].RtpEndpoint.release();
+    if (rooms[id]) {
+        rooms[id].RoomSocket.emit('bye');
+        if (rooms[id].RtpEndpoint) {
+            rooms[id].RtpEndpoint.release();
         }
-        if (clients[id].MediaPipeline) {
-            clients[id].MediaPipeline.release();
+        if (rooms[id].MediaPipeline) {
+            rooms[id].MediaPipeline.release();
         }
-        delete clients[id];
+        delete rooms[id];
     }
 }
