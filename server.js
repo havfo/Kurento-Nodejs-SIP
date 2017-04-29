@@ -4,8 +4,8 @@ var util = require('util');
 var fs = require('fs');
 var io = require('socket.io-client');
 
-const ws_uri = "ws://meet.akademia.no:8080/kurento";
-const io_uri = "https://meet.uninett.no";
+const ws_uri = 'ws://meet.akademia.no:8080/kurento';
+const io_uri = 'https://meet.uninett.no';
 var kurentoClient = null;
 
 var idCounter = 0;
@@ -19,16 +19,16 @@ function nextUniqueId() {
 var ua = new SIP.UA({
     traceSip: true,
     register: true,
-    uri: "websip@webrtcsip.uninett.no",
-    password: "websip",
+    uri: 'websip@webrtcsip.uninett.no',
+    password: 'websip',
     rel100: SIP.C.supported.SUPPORTED,
-    wsServers: "wss://webrtcsip.uninett.no",
+    wsServers: 'wss://webrtcsip.uninett.no',
     turnServers: {
-        urls: ["turn:videoturn@158.38.2.18:443?transport=tcp"],
-        username: "videoturn",
-        password: "videoturn"
+        urls: ['turn:videoturn@158.38.2.18:443?transport=tcp'],
+        username: 'videoturn',
+        password: 'videoturn'
     },
-    stunServers: "stun:stun.l.google.com:19302",
+    stunServers: 'stun:stun.l.google.com:19302',
     mediaHandlerFactory: function() {
         var sessionId = nextUniqueId();
         var roomName = null;
@@ -50,7 +50,7 @@ var ua = new SIP.UA({
         this.unmute = new Function();
 
         this.getDescription = (onSuccess, onFailure, mediaHint) => {
-            console.log("getDescription called!");
+            console.log('getDescription called!');
 
             joinRoom(roomName, sessionId, offer, (error, sdpAnswer) => {
                 if (error) {
@@ -69,9 +69,9 @@ var ua = new SIP.UA({
         }
 
         this.setDescription = (message, onSuccess, onFailure) => {
-            console.log("setDescription called!");
+            console.log('setDescription called!');
             offer = message.body;
-            roomName = message.getHeader("X-Room");
+            roomName = message.getHeader('X-Room');
             onSuccess();
         }
 
@@ -80,23 +80,23 @@ var ua = new SIP.UA({
 });
 
 ua.on('invite', session => {
-    console.log("INVITE arrived!");
+    console.log('INVITE arrived!');
     session.accept();
 });
 
 
 function getKurentoClient(callback) {
     if (kurentoClient !== null) {
-        console.log("KurentoClient already created");
+        console.log('KurentoClient already created');
         return callback(null, kurentoClient);
     }
 
     kurento(ws_uri, (error, _kurentoClient) => {
-        console.log("Creating KurentoClient");
+        console.log('Creating KurentoClient');
         if (error) {
-            console.log("Coult not find media server at address " + ws_uri);
-            return callback("Could not find media server at address" + ws_uri +
-                ". Exiting with error " + error);
+            console.log('Coult not find media server at address ' + ws_uri);
+            return callback('Could not find media server at address' + ws_uri +
+                '. Exiting with error ' + error);
         }
         kurentoClient = _kurentoClient;
         callback(null, kurentoClient);
@@ -114,7 +114,7 @@ function prepareMediaPipeline(id, callback) {
             if (error) {
                 return callback(error);
             }
-            console.log("Created MediaPipeline for room: " + rooms[id].room + " with ID: " + id);
+            console.log('Created MediaPipeline for room: ' + rooms[id].room + ' with ID: ' + id);
 
             rooms[id].MediaPipeline = _pipeline;
             rooms[id].MediaPipeline.create('Composite', (error, _composite) => {
@@ -122,7 +122,7 @@ function prepareMediaPipeline(id, callback) {
                     stop(id);
                     return callback(error);
                 }
-                console.log("Created Composite Hub for room: " + rooms[id].room + " with ID: " + id);
+                console.log('Created Composite Hub for room: ' + rooms[id].room + ' with ID: ' + id);
 
                 rooms[id].Composite = _composite;
                 callback(null);
@@ -136,7 +136,7 @@ function createRtpEndpoint(id, callback) {
         if (error) {
             return callback(error);
         }
-        console.log("Created HubPort for RtpEndpoint in room: " + rooms[id].room + " with ID: " + id);
+        console.log('Created HubPort for RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
 
         rooms[id].SIPClient.HubPort = _hubPort;
         rooms[id].MediaPipeline.create('RtpEndpoint', (error, _rtpEndpoint) => {
@@ -144,16 +144,16 @@ function createRtpEndpoint(id, callback) {
                 stop(id);
                 return callback(error);
             }
-            console.log("Created RtpEndpoint in room: " + rooms[id].room + " with ID: " + id);
+            console.log('Created RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
 
             rooms[id].SIPClient.RtpEndpoint = _rtpEndpoint;
             rooms[id].SIPClient.HubPort.connect(rooms[id].SIPClient.RtpEndpoint, error => {
                 if (error) {
                     stop(id);
-                    console.log("Error connecting " + error);
+                    console.log('Error connecting ' + error);
                     return callback(error);
                 }
-                console.log("Connected HubPort to RtpEndpoint in room: " + rooms[id].room + " with ID: " + id);
+                console.log('Connected HubPort to RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
 
                 callback(null);
             });
@@ -164,7 +164,7 @@ function createRtpEndpoint(id, callback) {
 function createWebRtcEndpoint(id, pid, callback) {
     rooms[id].WebRTCClients[msg.pid] = {};
     rooms[id].MediaPipeline.create('WebRtcEndpoint', (error, _webrtcEndpoint) => {
-        console.info("Created WebRtcEndpoint in room: " + rooms[id].room + " with ID: " + id);
+        console.info('Created WebRtcEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
         if (error) {
             removeParticipant(id, msg.pid);
             return callback(error);
@@ -195,7 +195,7 @@ function createWebRtcEndpoint(id, pid, callback) {
                 removeParticipant(id, msg.pid);
                 return callback(error);
             }
-            console.info("Created HubPort for WebRtcEndpoint in room: " + rooms[id].room + " with ID: " + id);
+            console.info('Created HubPort for WebRtcEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
 
             rooms[id].WebRTCClients[msg.pid].HubPort = _hubPort;
 
@@ -204,14 +204,14 @@ function createWebRtcEndpoint(id, pid, callback) {
                     removeParticipant(id, msg.pid);
                     return callback(error);
                 }
-                console.log("Connected WebRtcEndpoint to HubPort in room: " + rooms[id].room + " with ID: " + id);
+                console.log('Connected WebRtcEndpoint to HubPort in room: ' + rooms[id].room + ' with ID: ' + id);
 
                 rooms[id].SIPClient.RtpEndpoint.connect(rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint, function(error) {
                     if (error) {
                         removeParticipant(id, msg.pid);
                         return callback(error);
                     }
-                    console.log("Connected RtpEndpoint to WebRtcEndpoint: " + msg.pid + " in room: " + rooms[id].room + " with ID: " + id);
+                    console.log('Connected RtpEndpoint to WebRtcEndpoint: ' + msg.pid + ' in room: ' + rooms[id].room + ' with ID: ' + id);
                     callback(null);
                 });
             });
@@ -230,14 +230,14 @@ function createRoomSocket(id) {
         if (msg.sdp.type == 'offer') {
             createWebRtcEndpoint(id, msg.pid, error => {
                 if (error) {
-                    console.log("Error creating WebRtcEndpoint: " + msg.pid + " in room: " + rooms[id].room + " with ID: " + id + " error: " + error);
+                    console.log('Error creating WebRtcEndpoint: ' + msg.pid + ' in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                     removeParticipant(id, msg.pid);
                     return error;
                 }
 
                 rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.processOffer(msg.sdp.sdp, (error, sdpAnswer) => {
                     if (error) {
-                        console.log("Error processing offer for WebRtcEndpoint: " + msg.pid + " in room: " + rooms[id].room + " with ID: " + id + " error: " + error);
+                        console.log('Error processing offer for WebRtcEndpoint: ' + msg.pid + ' in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                         removeParticipant(id, msg.pid);
                         return error;
                     }
@@ -252,7 +252,7 @@ function createRoomSocket(id) {
 
                     rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.gatherCandidates(error => {
                         if (error) {
-                            console.log("Error gathering ICE for WebRtcEndpoint: " + msg.pid + " in room: " + rooms[id].room + " with ID: " + id + " error: " + error);
+                            console.log('Error gathering ICE for WebRtcEndpoint: ' + msg.pid + ' in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                             return error;
                         }
                     });
@@ -286,14 +286,14 @@ function createRoomSocket(id) {
 
         createWebRtcEndpoint(id, msg.pid, error => {
             if (error) {
-                console.log("Error creating WebRtcEndpoint: " + msg.pid + " in room: " + rooms[id].room + " with ID: " + id + " error: " + error);
+                console.log('Error creating WebRtcEndpoint: ' + msg.pid + ' in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                 removeParticipant(id, msg.pid);
                 return error;
             }
 
             rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.generateOffer((error, sdpOffer) => {
                 if (error) {
-                    console.log("Error generating offer for WebRtcEndpoint: " + msg.pid + " in room: " + rooms[id].room + " with ID: " + id + " error: " + error);
+                    console.log('Error generating offer for WebRtcEndpoint: ' + msg.pid + ' in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                     removeParticipant(id, msg.pid);
                     return error;
                 }
@@ -308,7 +308,7 @@ function createRoomSocket(id) {
 
                 rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.gatherCandidates(error => {
                     if (error) {
-                        console.log("Error gathering ICE for WebRtcEndpoint: " + msg.pid + " in room: " + rooms[id].room + " with ID: " + id + " error: " + error);
+                        console.log('Error gathering ICE for WebRtcEndpoint: ' + msg.pid + ' in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                         return error;
                     }
                 });
@@ -317,12 +317,12 @@ function createRoomSocket(id) {
     });
 
     rooms[id].RoomSocket.on('bye', msg => {
-        console.log("Got bye from WebRtcEndpoint: " + msg.pid + " in room: " + rooms[id].room + " with ID: " + id);
+        console.log('Got bye from WebRtcEndpoint: ' + msg.pid + ' in room: ' + rooms[id].room + ' with ID: ' + id);
         removeParticipant(id, msg.pid);
     });
 
     rooms[id].RoomSocket.on('participantDied', msg => {
-        console.log(" WebRtcEndpoint: " + msg.pid + " died in room: " + rooms[id].room + " with ID: " + id);
+        console.log(' WebRtcEndpoint: ' + msg.pid + ' died in room: ' + rooms[id].room + ' with ID: ' + id);
         removeParticipant(id, msg.pid);
     });
 
@@ -345,14 +345,14 @@ function joinRoom(room, id, sdpOffer, callback) {
 
     prepareMediaPipeline(id, error => {
         if (error) {
-            console.log("Error preparing MediaPipeline in room: " + rooms[id].room + " with ID: " + id + " error: " + error);
+            console.log('Error preparing MediaPipeline in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
             stop(id);
             return callback(error);
         }
 
         createRtpEndpoint(id, error => {
             if (error) {
-                console.log("Error creating RtpEndpoint in room: " + rooms[id].room + " with ID: " + id + " error: " + error);
+                console.log('Error creating RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                 stop(id);
                 return callback(error);
             }
@@ -360,7 +360,7 @@ function joinRoom(room, id, sdpOffer, callback) {
             rooms[id].SIPClient.RtpEndpoint.processOffer(sdpOffer, (error, sdpAnswer) => {
                 if (error) {
                     stop(id);
-                    console.log("Error processing offer from RtpEndpoint in room: " + rooms[id].room + " with ID: " + id + " error: " + error);
+                    console.log('Error processing offer from RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                     return callback(error);
                 }
 
