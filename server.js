@@ -23,12 +23,6 @@ var ua = new SIP.UA({
     password: 'DFOdH1abdsTDCqp',
     rel100: SIP.C.supported.SUPPORTED,
     wsServers: 'wss://meeting.akademia.no',
-    turnServers: {
-        urls: ['turn:videoturn@158.38.2.18:443?transport=tcp'],
-        username: 'videoturn',
-        password: 'videoturn'
-    },
-    stunServers: 'stun:stun.l.google.com:19302',
     mediaHandlerFactory: function() {
         var sessionId = nextUniqueId();
         var roomName = null;
