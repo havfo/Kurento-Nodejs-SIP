@@ -36,12 +36,11 @@ var ua = new SIP.UA({
         var answer = null;
 
         this.isReady = function isReady() {
-            console.log('Is ready!!!!');
             return true;
         }
 
         this.close = function() {
-            console.log('Is close!!!!');
+            console.log('Closing SIP dialog: ' + sessionId + ' to room: ' + roomName);
             stop(sessionId);
         }
 
@@ -50,7 +49,7 @@ var ua = new SIP.UA({
         this.unmute = new Function();
 
         this.getDescription = (onSuccess, onFailure, mediaHint) => {
-            console.log('getDescription called!');
+            console.log('Getdescription called for dialog: ' + sessionId + ' to room: ' + roomName);
 
             joinRoom(roomName, sessionId, offer, (error, sdpAnswer) => {
                 if (error) {
@@ -69,9 +68,9 @@ var ua = new SIP.UA({
         }
 
         this.setDescription = (message, onSuccess, onFailure) => {
-            console.log('setDescription called!');
             offer = message.body;
             roomName = message.getHeader('X-Room');
+            console.log('Setdescription called for dialog: ' + sessionId + ' to room: ' + roomName);
             onSuccess();
         }
 
@@ -80,7 +79,6 @@ var ua = new SIP.UA({
 });
 
 ua.on('invite', session => {
-    console.log('INVITE arrived!');
     session.accept();
 });
 
@@ -92,12 +90,12 @@ function getKurentoClient(callback) {
     }
 
     kurento(ws_uri, (error, _kurentoClient) => {
-        console.log('Creating KurentoClient');
         if (error) {
             console.log('Coult not find media server at address ' + ws_uri);
             return callback('Could not find media server at address' + ws_uri +
                 '. Exiting with error ' + error);
         }
+        console.log('Created KurentoClient, connected to: ' + ws_uri);
         kurentoClient = _kurentoClient;
         callback(null, kurentoClient);
     });
@@ -163,11 +161,11 @@ function createRtpEndpoint(id, callback) {
 
 function createWebRtcEndpoint(id, pid, callback) {
     rooms[id].MediaPipeline.create('WebRtcEndpoint', (error, _webrtcEndpoint) => {
-        console.info('Created WebRtcEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
         if (error) {
             removeParticipant(id, pid);
             return callback(error);
         }
+        console.info('Created WebRtcEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
 
         rooms[id].WebRTCClients[pid].WebRTCEndpoint = _webrtcEndpoint;
 
@@ -262,6 +260,7 @@ function createRoomSocket(id) {
         } else if (msg.sdp.type == 'answer') {
             rooms[id].WebRTCClients[msg.pid].WebRTCEndpoint.processAnswer(msg.sdp.sdp, error => {
                 if (error) {
+                    console.log('Error processing answer for WebRtcEndpoint: ' + msg.pid + ' in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                     removeParticipant(id, msg.pid);
                     return error;
                 }
@@ -292,8 +291,7 @@ function createRoomSocket(id) {
         if (typeof(rooms[id].WebRTCClients[msg.pid]) == 'undefined') {
             rooms[id].WebRTCClients[msg.pid] = {};
         }
-        // Create WebRTCEndpoint
-        console.log('RoomSocket got participantReady: ', msg);
+        console.log('RoomSocket got participantReady: ', msg.pid);
 
         createWebRtcEndpoint(id, msg.pid, error => {
             if (error) {
@@ -333,10 +331,11 @@ function createRoomSocket(id) {
     });
 
     rooms[id].RoomSocket.on('participantDied', msg => {
-        console.log(' WebRtcEndpoint: ' + msg.pid + ' died in room: ' + rooms[id].room + ' with ID: ' + id);
+        console.log('WebRtcEndpoint: ' + msg.pid + ' died in room: ' + rooms[id].room + ' with ID: ' + id);
         removeParticipant(id, msg.pid);
     });
 
+    console.log('Emitting ready in room: ' + rooms[id].room + ' with ID: ' + id);
     rooms[id].RoomSocket.emit('ready', rooms[id].room);
 }
 
@@ -387,10 +386,12 @@ function removeParticipant(id, pid) {
     if (rooms[id].WebRTCClients) {
         if (rooms[id].WebRTCClients[pid]) {
             if (rooms[id].WebRTCClients[pid].WebRTCEndpoint) {
+                console.log('Releasing WebRtcEndpoint: ' + pid + ' in room: ' + rooms[id].room + ' with ID: ' + id);
                 rooms[id].WebRTCClients[pid].WebRTCEndpoint.release();
             }
 
             if (rooms[id].WebRTCClients[pid].HubPort) {
+                console.log('Releasing WebRtcEndpoint HubPort: ' + pid + ' in room: ' + rooms[id].room + ' with ID: ' + id);
                 rooms[id].WebRTCClients[pid].HubPort.release();
             }
 
@@ -402,15 +403,18 @@ function removeParticipant(id, pid) {
 function stop(id) {
     if (rooms[id]) {
         if (rooms[id].RoomSocket) {
+            console.log('Emitting bye in room: ' + rooms[id].room + ' with ID: ' + id);
             rooms[id].RoomSocket.emit('bye');
             rooms[id].RoomSocket.disconnect();
         }
 
         if (rooms[id].SIPClient.RtpEndpoint) {
+            console.log('Releasing RtpEndpoint: ' + id + ' in room: ' + rooms[id].room);
             rooms[id].SIPClient.RtpEndpoint.release();
         }
 
         if (rooms[id].SIPClient.HubPort) {
+            console.log('Releasing RtpEndpoint HubPort: ' + id + ' in room: ' + rooms[id].room);
             rooms[id].SIPClient.HubPort.release();
         }
 
@@ -419,20 +423,24 @@ function stop(id) {
                 let WebRTCClient = rooms[id].WebRTCClients.shift();
 
                 if (WebRTCClient.WebRTCEndpoint) {
+                    console.log('Releasing WebRtcEndpoint: ' + id + ' in room: ' + rooms[id].room);
                     WebRTCClient.WebRTCEndpoint.release();
                 }
 
                 if (WebRTCClient.HubPort) {
+                    console.log('Releasing WebRtcEndpoint HubPort: ' + id + ' in room: ' + rooms[id].room);
                     WebRTCClient.HubPort.release();
                 }
             }
         }
 
         if (rooms[id].Composite) {
+            console.log('Releasing Composite: ' + id + ' in room: ' + rooms[id].room);
             rooms[id].Composite.release();
         }
 
         if (rooms[id].MediaPipeline) {
+            console.log('Releasing MediaPipeline: ' + id + ' in room: ' + rooms[id].room);
             rooms[id].MediaPipeline.release();
         }
 
