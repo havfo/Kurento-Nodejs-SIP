@@ -3,6 +3,7 @@ var kurento = require('kurento-client');
 var util = require('util');
 var fs = require('fs');
 var io = require('socket.io-client');
+var sdpparser = require('rtc-sdp');
 
 const ws_uri = 'ws://meet.akademia.no:8080/kurento';
 const io_uri = 'https://meet.uninett.no';
@@ -123,29 +124,30 @@ function prepareMediaPipeline(id, callback) {
     });
 }
 
-function createRtpEndpoint(id, callback) {
+function createSIPEndpoint(id, callback) {
     rooms[id].Composite.createHubPort((error, _hubPort) => {
         if (error) {
             return callback(error);
         }
-        console.log('Created HubPort for RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
+        console.log('Created HubPort for WebRtcEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
 
         rooms[id].SIPClient.HubPort = _hubPort;
-        rooms[id].MediaPipeline.create('RtpEndpoint', (error, _rtpEndpoint) => {
+        rooms[id].MediaPipeline.create('WebRtcEndpoint', (error, _webRtcEndpoint) => {
             if (error) {
                 stop(id);
                 return callback(error);
             }
-            console.log('Created RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
+            console.log('Created WebRtcEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
 
-            rooms[id].SIPClient.RtpEndpoint = _rtpEndpoint;
-            rooms[id].SIPClient.HubPort.connect(rooms[id].SIPClient.RtpEndpoint, error => {
+            rooms[id].SIPClient.WebRtcEndpoint = _webRtcEndpoint;
+
+            rooms[id].SIPClient.HubPort.connect(rooms[id].SIPClient.WebRtcEndpoint, error => {
                 if (error) {
                     stop(id);
                     console.log('Error connecting ' + error);
                     return callback(error);
                 }
-                console.log('Connected HubPort to RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
+                console.log('Connected HubPort to WebRtcEndpoint in room: ' + rooms[id].room + ' with ID: ' + id);
 
                 callback(null);
             });
@@ -195,12 +197,12 @@ function createWebRtcEndpoint(id, pid, callback) {
                 }
                 console.log('Connected WebRtcEndpoint to HubPort in room: ' + rooms[id].room + ' with ID: ' + id);
 
-                rooms[id].SIPClient.RtpEndpoint.connect(rooms[id].WebRTCClients[pid].WebRTCEndpoint, error => {
+                rooms[id].SIPClient.WebRtcEndpoint.connect(rooms[id].WebRTCClients[pid].WebRTCEndpoint, error => {
                     if (error) {
                         removeParticipant(id, pid);
                         return callback(error);
                     }
-                    console.log('Connected RtpEndpoint to WebRtcEndpoint: ' + pid + ' in room: ' + rooms[id].room + ' with ID: ' + id);
+                    console.log('Connected WebRtcEndpoint to WebRtcEndpoint: ' + pid + ' in room: ' + rooms[id].room + ' with ID: ' + id);
                     callback(null);
                 });
             });
@@ -337,7 +339,7 @@ function joinRoom(room, id, sdpOffer, callback) {
     rooms[id] = {
         room: room,
         SIPClient: {
-            RtpEndpoint: null,
+            WebRtcEndpoint: null,
             HubPort: null,
             sdp: sdpOffer
         },
@@ -354,23 +356,43 @@ function joinRoom(room, id, sdpOffer, callback) {
             return callback(error);
         }
 
-        createRtpEndpoint(id, error => {
+        createSIPEndpoint(id, error => {
             if (error) {
-                console.log('Error creating RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
+                console.log('Error creating SIPEndpoint in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                 stop(id);
                 return callback(error);
             }
 
-            rooms[id].SIPClient.RtpEndpoint.processOffer(sdpOffer, (error, sdpAnswer) => {
+            rooms[id].SIPClient.WebRtcEndpoint.on('IceCandidateFound', event => {
+                event.candidate.candidate = 'a=' + event.candidate.candidate;
+
+                rooms[id].SIPClient.sdp.addIceCandidate(event.candidate);
+            });
+
+            rooms[id].SIPClient.WebRtcEndpoint.on('IceGatheringDone', event => {
+                console.info('gathering done');
+
+                callback(null, rooms[id].SIPClient.sdp.toString());
+            });
+
+            rooms[id].SIPClient.WebRtcEndpoint.processOffer(sdpOffer, (error, sdpAnswer) => {
                 if (error) {
                     stop(id);
-                    console.log('Error processing offer from RtpEndpoint in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
+                    console.log('Error processing offer from WebRtcEndpoint in room: ' + rooms[id].room + ' with ID: ' + id + ' error: ' + error);
                     return callback(error);
                 }
 
+                rooms[id].SIPClient.sdp = sdpparser(sdpAnswer);
+
                 createRoomSocket(id);
 
-                callback(null, sdpAnswer);
+                rooms[id].SIPClient.WebRtcEndpoint.gatherCandidates(error => {
+                    if (error) {
+                        return error;
+                    }
+
+                    console.info('gathering candidates');
+                });
             });
         });
     });
@@ -402,13 +424,13 @@ function stop(id) {
             rooms[id].RoomSocket.disconnect();
         }
 
-        if (rooms[id].SIPClient.RtpEndpoint) {
-            console.log('Releasing RtpEndpoint: ' + id + ' in room: ' + rooms[id].room);
-            rooms[id].SIPClient.RtpEndpoint.release();
+        if (rooms[id].SIPClient.WebRtcEndpoint) {
+            console.log('Releasing WebRtcEndpoint: ' + id + ' in room: ' + rooms[id].room);
+            rooms[id].SIPClient.WebRtcEndpoint.release();
         }
 
         if (rooms[id].SIPClient.HubPort) {
-            console.log('Releasing RtpEndpoint HubPort: ' + id + ' in room: ' + rooms[id].room);
+            console.log('Releasing WebRtcEndpoint HubPort: ' + id + ' in room: ' + rooms[id].room);
             rooms[id].SIPClient.HubPort.release();
         }
 
